@@ -1,4 +1,6 @@
+from copy import deepcopy
 import random
+import matplotlib.pyplot as plt
 from math import pi, sin, cos, sqrt, fabs
 random.seed()
 
@@ -22,21 +24,22 @@ def fuerza(i, shared):
     return (fx, fy)
 
 # make a particle dict with randomised properties
-def createParticle():
+def createParticle(num_subparticles):
     pos = { "x": random.random(), "y": random.random() }
     subparticles = []
-    for i in range(10):
+    for i in range(num_subparticles):
         r = 0.02 * random.random()
-        theta = 2*pi*random.random()
+        theta = 2*pi*i/num_subparticles # base angle
+        phi = (pi/num_subparticles)*random.random()-(pi/(2*num_subparticles)) # wiggle
         subparticle = {
-            "pos": { "x": pos["x"] + r*cos(theta), "y": pos["y"] + r*sin(theta) },
-            "charge": -0.01
+            "pos": { "x": pos["x"] + r*cos(theta+phi), "y": pos["y"] + r*sin(theta+phi) },
+            "charge": -0.00001
         }
         subparticles.append(subparticle)
 
     return {
         "pos": pos,
-        "charge": 1,
+        "charge": 0.001,
         "subparticles": subparticles
     }
 
@@ -47,7 +50,7 @@ def forcePart(p, q):
     dist = sqrt(dx*dx + dy*dy)
     direction = (-1) ** (1+(p["charge"]*q["charge"] < 0))
     magnitude = direction * fabs(p["charge"] - q["charge"]) / (1 + dist)
-    return (dx*magnitude, dy*magnitude)
+    return (-dx*magnitude, -dy*magnitude)
 
 # do force between a particle and the other particles in the space
 def force(idx, particles):
@@ -76,7 +79,23 @@ def force(idx, particles):
     return (forceSumX, forceSumY)
 
 particleSpace = []
-for i in range(2):
-    particleSpace.append(createParticle())
+for i in range(10):
+    particleSpace.append(createParticle(10))
 
-print(force(0,particleSpace)) # these forces are RLY BIG...
+print(force(0,particleSpace)) # these forces are RLY BIG... not any more ! :)
+
+for i in range(10):
+    particleSpaceNew = []
+    for j in range(len(particleSpace)):
+        (dx,dy) = force(j, particleSpace)
+        p2 = deepcopy(particleSpace[j])
+        p2["pos"]["x"] += dx
+        p2["pos"]["y"] += dy
+        for sp in particleSpace[j]["subparticles"]:
+            sp["pos"]["x"] += dx
+            sp["pos"]["y"] += dy
+        particleSpaceNew.append(p2)
+    plt.scatter([p["pos"]["x"] for p in particleSpace], [p["pos"]["y"] for p in particleSpace])
+    plt.title("Step %d" % i)
+    plt.savefig("step%d.png" % i)
+    particleSpace = particleSpaceNew
