@@ -1,101 +1,79 @@
 from copy import deepcopy
 import random
 import matplotlib.pyplot as plt
-from math import pi, sin, cos, sqrt, fabs
+import scipy.constants as consts
+from math import pi, sin, cos, sqrt, fabs, exp
 random.seed()
 
-def fuerza(i, shared):
-    p = shared.data
-    n = shared.count
-    pi = p.iloc[i]
-    xi = pi.x
-    yi = pi.y
-    ci = pi.c
-    fx, fy = 0, 0
-    for j in range(n):
-        pj = p.iloc[j]
-        cj = pj.c
-        dire = (-1)**(1 + (ci * cj < 0))
-        dx = xi - pj.x
-        dy = yi - pj.y
-        factor = dire * fabs(ci - cj) / (sqrt(dx**2 + dy**2) + eps)
-        fx -= dx * factor
-        fy -= dy * factor
-    return (fx, fy)
+# constants and stuff
+hamaker = 3 * consts.physical_constants["electron volt"][0] # gold-gold, as in https://web.science.uu.nl/scm/Articles/2010/SI%2010.1021-nl102705p.pdf
+dielectric = 77.46 # dielectric constant of water at 25 degrees centigrade, https://www.sciencedirect.com/science/article/pii/B9780123850133000070
+ionicStrength = 0.001 # ionic strength of water
+q = consts.physical_constants["elementary charge"][0]
+debyeLength = 1/sqrt((consts.k * 298.15 * consts.epsilon_0 * dielectric) / (2*q*q*consts.Avogadro*ionicStrength))
+sigma = -2e-3 # surface charge density of gold, https://pubs.acs.org/doi/10.1021/acs.jpcc.5b00568
+radius = 50e-9 # radius of gold nanoparticles, https://pubs.acs.org/doi/10.1021/acs.jpcc.5b00568
+mass = (19.32e-3) * (4/3 * pi * radius*radius*radius) # calculated from true density https://www.americanelements.com/gold-nanoparticles-7440-57-5
 
-# make a particle dict with randomised properties
-def createParticle(num_subparticles):
-    pos = { "x": random.random(), "y": random.random() }
-    subparticles = []
-    for i in range(num_subparticles):
-        r = 0.02 * random.random()
-        theta = 2*pi*i/num_subparticles # base angle
-        phi = (pi/num_subparticles)*random.random()-(pi/(2*num_subparticles)) # wiggle
-        subparticle = {
-            "pos": { "x": pos["x"] + r*cos(theta+phi), "y": pos["y"] + r*sin(theta+phi) },
-            "charge": -0.00001
-        }
-        subparticles.append(subparticle)
+def freeEnergyDL(h):
+    return (2*sigma*sigma)/(consts.epsilon_0*dielectric*debyeLength)*exp(-debyeLength*h)
 
-    return {
-        "pos": pos,
-        "charge": 0.001,
-        "subparticles": subparticles
-    }
+def freeEnergyVDW(h):
+    return -(hamaker)/(12*pi*h*h)
 
-# calculate force between two individual (sub)particles
-def forcePart(p, q):
-    dx = p["pos"]["x"] - q["pos"]["x"]
-    dy = p["pos"]["y"] - q["pos"]["y"]
-    dist = sqrt(dx*dx + dy*dy)
-    direction = (-1) ** (1+(p["charge"]*q["charge"] < 0))
-    magnitude = direction * fabs(p["charge"] - q["charge"]) / (1 + dist)
-    return (-dx*magnitude, -dy*magnitude)
+def freeEnergy(h):
+    return freeEnergyDL(h) + freeEnergyVDW(h)
 
-# do force between a particle and the other particles in the space
-def force(idx, particles):
-    p = particles[idx]
-    forceSumX, forceSumY = 0,0
+def force(h):
+    return pi*radius*freeEnergy(h)
 
-    # this is where the forces are calculated
-    for q in particles: # for each other particle in the space
-        (fx,fy) = forcePart(p, q) # do the force between two big particles
-        forceSumX += fx
-        forceSumY += fy
-        for qSub in q["subparticles"]: # for each of their subparticles
-            (fx,fy) = forcePart(p, qSub) # do the force between my big particle and their subparticle
-            forceSumX += fx
-            forceSumY += fy
-        
-        for pSub in p["subparticles"]: # for each of my subparticles
-            (fx,fy) = forcePart(pSub, q) # do the force between this subparticle and their big particle
-            forceSumX += fx
-            forceSumY += fy
-            for qSub in q["subparticles"]: # for each of their subparticles
-                (fx,fy) = forcePart(pSub, qSub) # do the force between these two subparticles
-                forceSumX += fx
-                forceSumY += fy
-    
-    return (forceSumX, forceSumY)
 
-particleSpace = []
-for i in range(10):
-    particleSpace.append(createParticle(10))
+class Particle:
+    def __init__(self, x=None, y=None):
+        self.x = x if x else random.random() * 1e-6
+        self.y = y if y else random.random() * 1e-6
 
-print(force(0,particleSpace)) # these forces are RLY BIG... not any more ! :)
+    def distance(self, p2):
+        dx = self.x - p2.x
+        dy = self.y - p2.y
+        return sqrt(dx*dx + dy*dy)
 
-for i in range(10):
-    particleSpaceNew = []
-    for j in range(len(particleSpace)):
-        (dx,dy) = force(j, particleSpace)
-        p2 = deepcopy(particleSpace[j])
-        p2["pos"]["x"] += dx
-        p2["pos"]["y"] += dy
-        for sp in particleSpace[j]["subparticles"]:
-            sp["pos"]["x"] += dx
-            sp["pos"]["y"] += dy
-        particleSpaceNew.append(p2)
-    plt.scatter([p["pos"]["x"] for p in particleSpace], [p["pos"]["y"] for p in particleSpace])
-    plt.title("Step %d" % i)
-    plt.savefig("step%d.png" % i)
-    particleSpace = particleSpaceNew
+
+def forceStep(space):
+    timeInterval = 3e-11 # time step; the force is assumed to be linear at steps of this length
+    nextSpace = []
+    for p1 in space:
+        forceSumX, forceSumY = 0, 0
+        for p2 in space:
+            if p1 == p2:
+                continue
+            dist = p1.distance(p2)
+            (dirx,diry) = ((p1.x-p2.x)/dist,(p1.y-p2.y)/dist)
+            f = force(dist)
+            forceSumX += f * (p1.x-p2.x) / dist
+            forceSumY += f * (p1.y-p2.y) / dist
+        #print("Force on {:s} is ({:e},{:e})".format(str(p1),forceSumX,forceSumY))
+        dx = forceSumX * timeInterval*timeInterval / (2*mass)
+        dy = forceSumY * timeInterval*timeInterval / (2*mass)
+        ddist = sqrt(dx*dx+dy*dy)
+        print("Particle {:s} moved by ({:e},{:e})".format(str(p1), dx, dy))
+        nextSpace.append(Particle(p1.x-dx, p1.y-dy))
+    return nextSpace
+
+def initial():
+    return [Particle() for i in range(10)]
+
+def simulate(steps):
+    space = initial()
+    for i in range(steps+1):
+        print(i)
+        if i % 10 == 0:
+            plt.scatter([p.x for p in space], [p.y for p in space])
+            plt.title("Step {:d}".format(i))
+            plt.xlim(-0.1e-6,1.1e-6)
+            plt.ylim(-0.1e-6,1.1e-6)
+            plt.savefig("step{:d}.png".format(i))
+            plt.close()
+        space = forceStep(space)
+
+simulate(100)
